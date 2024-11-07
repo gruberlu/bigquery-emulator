@@ -129,7 +129,7 @@ func (r *Repository) encodeSchemaField(field *bigqueryv2.TableFieldSchema) strin
 	if field.Type == "RECORD" {
 		types := make([]string, 0, len(field.Fields))
 		for _, f := range field.Fields {
-			types = append(types, fmt.Sprintf("%s %s", f.Name, r.encodeSchemaField(f)))
+			types = append(types, fmt.Sprintf("`%s` %s", f.Name, r.encodeSchemaField(f)))
 		}
 		elem = fmt.Sprintf("STRUCT<%s>", strings.Join(types, ","))
 	} else {
@@ -365,6 +365,28 @@ func (r *Repository) CreateOrReplaceTable(ctx context.Context, tx *connection.Tx
 	return nil
 }
 
+func parseColumn(column *types.Column, data interface{}) interface{} {
+	switch column.Type {
+	case types.STRUCT:
+		m := data.(map[string]interface{})
+		for _, f := range column.Fields {
+			m[f.Name] = parseColumn(f, m[f.Name])
+		}
+		return m
+	case types.TIMESTAMP:
+		str, ok := data.(string)
+		if !ok {
+			return data
+		}
+		parsed, err := zetasqlite.TimeFromTimestampValue(str)
+		if err != nil {
+			return data
+		}
+		return parsed
+	}
+	return data
+}
+
 func (r *Repository) AddTableData(ctx context.Context, tx *connection.Tx, projectID, datasetID string, table *types.Table) error {
 	if len(table.Data) == 0 {
 		return nil
@@ -406,16 +428,15 @@ func (r *Repository) AddTableData(ctx context.Context, tx *connection.Tx, projec
 
 		for _, column := range columns {
 			if value, found := data[column.Name]; found {
-				isTimestampColumn := column.Type == types.TIMESTAMP
-				inputString, isInputString := value.(string)
-
-				if isInputString && isTimestampColumn {
-					parsedTimestamp, err := zetasqlite.TimeFromTimestampValue(inputString)
-					// If we could parse the timestamp, use it when inserting, otherwise fallback to the supplied value
-					if err == nil {
-						values = append(values, parsedTimestamp)
-						continue
+				switch column.Mode {
+				case types.RepeatedMode:
+					parsed := make([]interface{}, 0, len(value.([]interface{})))
+					for _, val := range value.([]interface{}) {
+						parsed = append(parsed, parseColumn(column, val))
 					}
+					value = parsed
+				default:
+					value = parseColumn(column, value)
 				}
 
 				values = append(values, value)
