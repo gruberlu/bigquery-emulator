@@ -228,7 +228,11 @@ func formatTimestamp(cell *TableCell, schema *bigqueryv2.TableFieldSchema) {
 	} else {
 		t, _ = zetasqlite.TimeFromTimestampValue(str)
 	}
-	microsec := t.UnixNano() / int64(time.Microsecond)
+
+	sec := t.Unix()
+	nanosec := int64(t.Nanosecond())
+	microsec := sec*1_000_000 + nanosec/1_000
+
 	*cell = TableCell{
 		V:    fmt.Sprint(microsec),
 		Name: schema.Name,

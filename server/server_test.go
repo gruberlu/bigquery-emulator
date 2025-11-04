@@ -115,6 +115,30 @@ func TestSimpleQuery(t *testing.T) {
 			t.Fatal("Failed to query null ARRAY")
 		}
 	})
+
+	t.Run("timestamp", func(t *testing.T) {
+		query := client.Query("SELECT TIMESTAMP('0001-01-01 00:00:00+00') AS ts")
+		it, err := query.Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var row struct {
+			Ts time.Time `bigquery:"ts"`
+		}
+		for {
+			if err := it.Next(&row); err != nil {
+				if err == iterator.Done {
+					break
+				}
+				t.Fatal(err)
+			}
+			t.Log("row = ", row)
+		}
+		expected := time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)
+		if !row.Ts.Equal(expected) {
+			t.Fatalf("failed to query TIMESTAMP. expected %s but got %s", expected, row.Ts)
+		}
+	})
 }
 
 func TestDataset(t *testing.T) {
