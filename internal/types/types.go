@@ -187,10 +187,10 @@ func (c *TableCell) AppendValueToARROWBuilder(builder array.Builder) error {
 
 func formatStructArray(cell *TableCell, schema []*bigqueryv2.TableFieldSchema) {
 	v, ok := cell.V.([]*TableCell)
+	if !ok {
+		return
+	}
 	for idx, c := range v {
-		if !ok {
-			return
-		}
 		r := c.V.(TableRow)
 		v[idx].V = TableRow{F: formatRow(r.F, schema)}
 	}
@@ -205,17 +205,13 @@ func formatStruct(cell *TableCell, schema []*bigqueryv2.TableFieldSchema) {
 	cell.V = TableRow{F: f}
 }
 
-func formatTimestampArray(cell *TableCell) {
+func formatTimestampArray(cell *TableCell, schema *bigqueryv2.TableFieldSchema) {
 	v, ok := cell.V.([]*TableCell)
 	if !ok {
 		return
 	}
-	for idx, c := range v {
-		t, _ := zetasqlite.TimeFromTimestampValue(c.V.(string))
-		microsec := t.UnixNano() / int64(time.Microsecond)
-		v[idx] = &TableCell{
-			V: fmt.Sprint(microsec),
-		}
+	for idx := range v {
+		formatTimestamp(v[idx], schema)
 	}
 }
 
@@ -224,7 +220,20 @@ func formatTimestamp(cell *TableCell, schema *bigqueryv2.TableFieldSchema) {
 	var t time.Time
 	// this should be fixed in the zetasqlite package
 	if _, err := strconv.ParseFloat(str, 64); err != nil {
-		t, _ = time.Parse("2006-01-02T15:04:05-07:00", str)
+		layouts := []string{
+			"2006-01-02T15:04:05-07:00",
+			"2006-01-02T15:04:05Z",
+		}
+		for _, layout := range layouts {
+			t, err = time.Parse(layout, str)
+			if err == nil {
+				break
+			}
+		}
+		if err != nil {
+			// no layout matched, fallback to string
+			return
+		}
 	} else {
 		t, _ = zetasqlite.TimeFromTimestampValue(str)
 	}
@@ -248,7 +257,7 @@ func formatRow(cells []*TableCell, schema []*bigqueryv2.TableFieldSchema) []*Tab
 		case schema[colIdx].Type == string(types.RECORD) && cell.V != nil:
 			formatStruct(cell, schema[colIdx].Fields)
 		case schema[colIdx].Type == string(types.TIMESTAMP) && schema[colIdx].Mode == string(types.RepeatedMode) && cell.V != nil:
-			formatTimestampArray(cell)
+			formatTimestampArray(cell, schema[colIdx])
 		case schema[colIdx].Type == string(types.TIMESTAMP) && cell.V != nil:
 			formatTimestamp(cell, schema[colIdx])
 		}
